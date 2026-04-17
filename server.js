@@ -28,12 +28,14 @@ pool.query(`
         id SERIAL PRIMARY KEY,
         page VARCHAR(255) NOT NULL,
         url TEXT NOT NULL,
-        name TEXT,
+        title TEXT,
         brand TEXT,
         category VARCHAR(255),
-        image TEXT,
-        addedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
+        image_url TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    -- Ensure category column exists since it was missing in the manual Supabase schema
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(255);
 `).then(() => console.log('Connected to PostgreSQL database.')).catch(console.error);
 
 // ── Fallback regex for Myntra if Scraping is blocked ──
@@ -58,8 +60,18 @@ function parseMyntraUrl(url) {
 app.get('/api/products', async (req, res) => {
     const page = req.query.page || 'default';
     try {
-        const result = await pool.query('SELECT * FROM products WHERE page = $1 ORDER BY addedAt DESC', [page]);
-        res.json(result.rows);
+        const result = await pool.query('SELECT * FROM products WHERE page = $1 ORDER BY created_at DESC', [page]);
+        const mapped = result.rows.map(row => ({
+            id: row.id,
+            page: row.page,
+            url: row.url,
+            name: row.title,
+            brand: row.brand,
+            category: row.category,
+            image: row.image_url,
+            addedAt: row.created_at
+        }));
+        res.json(mapped);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -102,14 +114,18 @@ app.post('/api/products', async (req, res) => {
         if (!brand) brand = parsed.brand;
     }
 
-    // Absolute universal fallback
     title = title || url;
 
     try {
-        const query = `INSERT INTO products (page, url, name, brand, category, image) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
+        const query = `INSERT INTO products (page, url, title, brand, category, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
         const params = [page, url.trim(), title, brand, category, image];
         const result = await pool.query(query, params);
-        res.json({ message: 'success', data: result.rows[0] });
+        const row = result.rows[0];
+        
+        res.json({ message: 'success', data: {
+            id: row.id, page: row.page, url: row.url,
+            name: row.title, brand: row.brand, category: row.category, image: row.image_url
+        }});
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
